@@ -1,0 +1,5 @@
+Theorem. Every natural number is either even or odd.
+
+Proof. This is a standard fact about the parity of natural numbers.
+It follows by induction on n, or more directly from the Mathlib lemma
+that characterises even and odd numbers.

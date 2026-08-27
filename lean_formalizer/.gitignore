@@ -1,0 +1,6 @@
+# Machine-local (do not commit)
+local_config.ps1
+local_config.env
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lean-formalizer"
+version = "1.0.0"
+description = "High-accuracy Natural Language / PDF → Lean 4 formalization pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pdfplumber>=0.11.0",
+  "pypdf>=4.0.0",
+  "numpy>=1.26.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+anthropic = ["anthropic>=0.30.0"]
+embeddings = ["chromadb>=0.5.0", "sentence-transformers>=3.0.0", "scikit-learn>=1.4.0"]
+
+[project.scripts]
+lean-formalizer = "lean_formalizer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lean Formalizer — NL / PDF → Lean 4</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="brand">
+        <div class="logo">λ</div>
+        <div>
+          <h1>Lean Formalizer</h1>
+          <p class="tagline">Natural language / PDF → verified Lean 4</p>
+        </div>
+      </div>
+      <nav class="page-nav" aria-label="Pages">
+        <button type="button" class="nav-btn active" data-page="formalize">Formalize</button>
+        <button type="button" class="nav-btn" data-page="history">History</button>
+        <button type="button" class="nav-btn" data-page="stats">Statistics</button>
+      </nav>
+      <div class="header-actions">
+        <button type="button" class="btn ghost" id="btn-theme" title="Toggle day/night">☀ / ☾</button>
+        <button type="button" class="btn ghost" id="btn-doctor">Doctor</button>
+        <button type="button" class="btn ghost" id="btn-memory">Library</button>
+        <button type="button" class="btn ghost" id="btn-details" disabled>Details</button>
+        <span class="pill" id="status-pill">checking…</span>
+      </div>
+    </header>
+
+    <main class="grid page" id="page-formalize">
+      <section class="panel controls">
+        <h2>Input</h2>
+        <div class="tabs">
+          <button type="button" class="tab active" data-tab="text">Text</button>
+          <button type="button" class="tab" data-tab="pdf">PDF</button>
+        </div>
+
+        <div id="tab-text" class="tab-panel active">
+          <label for="input-text">Natural language (required)</label>
+          <textarea id="input-text" rows="8" placeholder="Theorem. Every natural number is either even or odd.&#10;&#10;Proof. …"></textarea>
+
+          <label for="input-statement">Formal statement <span class="muted">(optional)</span></label>
+          <textarea id="input-statement" rows="4" placeholder="Optional: precise NL claim, or a Lean declaration to prove&#10;e.g. theorem t (n : ℕ) : Even n ∨ Odd n"></textarea>
+          <p class="hint">If set, the translator treats this as the target statement (Lean declaration or precise claim).</p>
+        </div>
+
+        <div id="tab-pdf" class="tab-panel">
+          <label for="input-pdf">Upload PDF</label>
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="input-pdf" accept="application/pdf,.pdf" />
+            <p id="pdf-label">Drop a PDF here or click to browse</p>
+          </div>
+          <label for="max-pages">Max pages (optional)</label>
+          <input type="number" id="max-pages" min="1" placeholder="e.g. 5" />
+        </div>
+
+        <label for="domain">Domain</label>
+        <select id="domain">
+          <option value="general">general</option>
+          <option value="number_theory" selected>number_theory</option>
+          <option value="algebra">algebra</option>
+          <option value="analysis">analysis</option>
+          <option value="topology">topology</option>
+          <option value="geometry">geometry</option>
+          <option value="logic">logic</option>
+          <option value="combinatorics">combinatorics</option>
+        </select>
+
+        <details class="cfg-fold">
+          <summary>LLM API &amp; generation</summary>
+          <label for="llm-backend">Backend</label>
+          <select id="llm-backend">
+            <option value="mock" selected>mock (offline)</option>
+            <option value="openai">OpenAI / CC Switch</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="http">HTTP (OpenAI-compatible)</option>
+          </select>
+
+          <div id="cfg-openai" class="api-cfg hidden">
+            <label>API Key</label>
+            <input type="password" id="openai-api-key" placeholder="sk-…" autocomplete="off" />
+            <label>Model</label>
+            <input type="text" id="openai-model" placeholder="gpt-4o / deepseek-v4-flash" value="gpt-4o" />
+          </div>
+          <div id="cfg-anthropic" class="api-cfg hidden">
+            <label>API Key</label>
+            <input type="password" id="anthropic-api-key" placeholder="sk-ant-…" autocomplete="off" />
+            <label>Model</label>
+            <input type="text" id="anthropic-model" value="claude-sonnet-4-20250514" />
+          </div>
+          <div id="cfg-http" class="api-cfg hidden">
+            <label>Endpoint URL</label>
+            <input type="url" id="llm-http-url" placeholder="http://127.0.0.1:PORT or an OpenAI-compatible endpoint" />
+            <div id="http-key-field">
+              <label>API Key <span class="muted">(optional)</span></label>
+              <input type="password" id="llm-http-key" placeholder="Bearer token" autocomplete="off" />
+            </div>
+            <p class="hint" id="http-connection-status"></p>
+            <label>Model</label>
+            <input type="text" id="llm-http-model" placeholder="deepseek-v4-flash" />
+          </div>
+
+          <div class="row3">
+            <div>
+              <label for="num-candidates">Candidates</label>
+              <input type="number" id="num-candidates" min="1" max="12" value="2" />
+            </div>
+            <div>
+              <label for="llm-candidate-workers">LLM candidate workers</label>
+              <input type="number" id="llm-candidate-workers" min="1" max="12" value="1" />
+            </div>
+            <div>
+              <label for="max-repairs">Repairs</label>
+              <input type="number" id="max-repairs" min="0" max="10" value="3" />
+            </div>
+          </div>
+          <p class="hint">Concurrent candidate requests can overload a local HTTP endpoint. Keep this at 1 unless your endpoint handles parallel calls reliably.</p>
+          <div class="row3">
+            <div>
+              <label for="temperature">Temp</label>
+              <input type="number" id="temperature" min="0" max="1" step="0.05" value="0.2" />
+            </div>
+            <label>&nbsp;</label>
+            <label>&nbsp;</label>
+          </div>
+          <label for="lean-compile-workers">Lean compile workers</label>
+          <input type="number" id="lean-compile-workers" min="1" max="12" value="1" />
+          <p class="hint">Compiles different candidates concurrently. Higher values use more CPU and memory.</p>
+          <label for="lean-compile-timeout">Lean timeout per check (s)</label>
+          <input type="number" id="lean-compile-timeout" min="15" max="1800" step="5" value="120" />
+          <p class="hint">Maximum for one Lean check. It is not divided across candidates; the remaining job time is still enforced.</p>
+          <div class="row3">
+            <label>API timeout (s)
+              <input type="number" id="llm-timeout" min="10" max="1800" step="5" value="300" />
+            </label>
+            <label>Job timeout (s)
+              <input type="number" id="job-timeout" min="30" max="3600" step="10" value="1200" />
+            </label>
+            <label>&nbsp;</label>
+          </div>
+          <p class="hint" id="timeout-estimate">Recommended time limit: enter a claim to estimate.</p>
+          <label class="checkbox">
+            <input type="checkbox" id="save-memory" checked />
+            Save verified result to translator memory
+          </label>
+          <button type="button" class="btn ghost" id="btn-autoconfig">Auto-detect config</button>
+          <span id="autoconfig-status" class="hint"></span>
+        </details>
+
+        <button type="button" class="btn primary block" id="btn-run">
+          <span class="btn-label">Formalize → Lean 4</span>
+          <span class="spinner hidden" id="run-spinner"></span>
+        </button>
+        <p class="hint" id="run-hint">Statement first, then proof · verify · repair</p>
+      </section>
+
+      <section class="panel results">
+        <div class="results-header">
+          <h2>Result</h2>
+          <div class="result-actions hidden" id="result-actions">
+            <button type="button" class="btn ghost" id="btn-copy" title="Copy Lean code only">Copy Lean</button>
+            <button type="button" class="btn ghost" id="btn-copy-report" title="Copy full debug report for support">Copy report</button>
+            <button type="button" class="btn ghost" id="btn-download">Download</button>
+          </div>
+        </div>
+
+        <div id="empty-state" class="empty">
+          <div class="empty-icon">⊢</div>
+          <p>Enter a claim (and optional formal statement), then <strong>Formalize</strong>.</p>
+        </div>
+
+        <div id="result-view" class="hidden">
+          <div class="status-row" id="status-row"></div>
+          <p class="verdict" id="out-verdict"></p>
+          <div class="run-progress hidden" id="run-progress" aria-live="polite">
+            <strong id="run-progress-title">Preparing formalization</strong>
+            <p id="run-progress-detail"></p>
+            <ol id="run-progress-phases" class="pipeline-phases" aria-label="Pipeline phases"></ol>
+          <div class="run-event-log">
+              <label class="result-label">Current job events</label>
+              <ol id="run-progress-steps"></ol>
+            </div>
+          </div>
+          <div class="preflight-panel hidden" id="preflight-panel" aria-live="polite">
+            <strong>Local Mathlib preflight</strong>
+            <p id="preflight-summary"></p>
+            <ul id="preflight-items"></ul>
+          </div>
+          <section id="candidate-overview" class="candidate-overview hidden" aria-live="polite" aria-label="Candidate progress and results">
+            <div class="candidate-overview-head">
+              <label class="result-label">Candidates</label>
+              <span id="candidate-overview-note" class="muted"></span>
+            </div>
+            <div id="candidate-grid" class="candidate-grid"></div>
+          </section>
+          <section id="timing-summary" class="timing-summary hidden" aria-live="polite" aria-label="Pipeline timing">
+            <div class="candidate-overview-head">
+              <label class="result-label">Timing by step</label>
+              <span id="timing-total" class="muted"></span>
+            </div>
+            <ol id="timing-list" class="timing-list"></ol>
+          </section>
+          <section id="proof-audit" class="proof-audit hidden" aria-live="polite" aria-label="Proof review">
+            <div class="proof-audit-head">
+              <label class="result-label">Proof review (API)</label>
+              <span id="proof-audit-status" class="muted"></span>
+            </div>
+            <p id="proof-audit-summary" class="proof-audit-summary"></p>
+            <ol id="proof-audit-steps" class="proof-audit-steps"></ol>
+          </section>
+          <label class="result-label">Lean 4</label>
+          <pre id="out-lean" class="code-block lean"></pre>
+          <section id="lean-feedback" class="lean-feedback hidden" aria-live="polite" aria-label="Lean compiler feedback">
+            <div class="lean-feedback-header">
+              <strong>Lean compiler feedback</strong>
+              <span id="lean-feedback-status" class="lean-feedback-status">Waiting</span>
+            </div>
+            <pre id="out-lean-feedback" class="lean-feedback-output"></pre>
+          </section>
+          <p class="muted" id="out-theorem-line"></p>
+        </div>
+
+        <div id="error-view" class="error-box hidden"></div>
+      </section>
+    </main>
+
+
+    <!-- History / stage-trace summary of recent tries -->
+    <section class="page hidden" id="page-history">
+      <div class="stats-toolbar">
+        <h2 class="stats-title">Run history</h2>
+        <div class="history-toolbar-actions">
+          <button type="button" class="btn ghost" id="btn-refresh-history">Refresh</button>
+        </div>
+      </div>
+      <p class="muted history-note" id="history-note">
+        Summaries of the last formalization tries in this server session (outcome, claim, tokens, failed stages).
+      </p>
+      <div class="history-summary" id="history-summary"></div>
+      <div class="history-list" id="history-list">
+        <p class="muted">Loading…</p>
+      </div>
+    </section>
+
+    <!-- Statistics page -->
+    <section class="page hidden" id="page-stats">
+      <div class="stats-toolbar">
+        <h2 class="stats-title">Translator statistics</h2>
+        <button type="button" class="btn ghost" id="btn-refresh-stats">Refresh</button>
+      </div>
+      <div class="stats-grid" id="stats-cards">
+        <div class="stat-card"><div class="stat-label">Loading…</div></div>
+      </div>
+      <div class="stats-panels">
+        <div class="panel">
+          <h2>By domain</h2>
+          <div id="stats-domains" class="bar-list muted">—</div>
+        </div>
+        <div class="panel">
+          <h2>By difficulty</h2>
+          <div id="stats-difficulty" class="bar-list muted">—</div>
+        </div>
+        <div class="panel">
+          <h2>This session (server process)</h2>
+          <pre id="stats-session" class="code-block">—</pre>
+        </div>
+        <div class="panel">
+          <h2>Recent translator successes</h2>
+          <pre id="stats-recent" class="code-block">—</pre>
+        </div>
+        <div class="panel full">
+          <h2>Environment</h2>
+          <pre id="stats-env" class="code-block">—</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Details modal: secondary info -->
+    <div class="modal hidden" id="modal-details">
+      <div class="modal-card modal-wide">
+        <div class="modal-head">
+          <h3>Details</h3>
+          <button type="button" class="btn ghost" data-close>✕</button>
+        </div>
+        <div class="details-tabs">
+          <button type="button" class="dtab active" data-dtab="ver">Verification</button>
+          <button type="button" class="dtab" data-dtab="struct">Structure</button>
+          <button type="button" class="dtab" data-dtab="cands">Candidates</button>
+          <button type="button" class="dtab" data-dtab="mem">Retrieval</button>
+          <button type="button" class="dtab" data-dtab="trace">Stage trace</button>
+        </div>
+        <div id="dtab-ver" class="dtab-panel active"><pre id="out-verification" class="code-block"></pre></div>
+        <div id="dtab-struct" class="dtab-panel hidden"><pre id="out-structure" class="code-block"></pre></div>
+        <div id="dtab-cands" class="dtab-panel hidden"><div id="out-candidates"></div></div>
+        <div id="dtab-mem" class="dtab-panel hidden"><pre id="out-memory" class="code-block"></pre></div>
+        <div id="dtab-trace" class="dtab-panel hidden"><pre id="out-trace" class="code-block"></pre></div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-doctor">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3>Environment</h3>
+          <button type="button" class="btn ghost" data-close>✕</button>
+        </div>
+        <pre id="doctor-body" class="code-block"></pre>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-memory">
+      <div class="modal-card modal-wide">
+        <div class="modal-head">
+          <h3>Library</h3>
+          <button type="button" class="btn ghost" data-close>✕</button>
+        </div>
+        <p class="hint">
+          <strong>Examples</strong> = curated NL–Lean pairs for few-shot help (not translator output).
+          <strong>Translator memory</strong> = only results this tool verified and saved.
+        </p>
+        <pre id="memory-body" class="code-block"></pre>
+      </div>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
