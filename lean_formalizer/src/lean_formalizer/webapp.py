@@ -20,6 +20,8 @@ import traceback
 import uuid
 import urllib.parse
 import webbrowser
+from email import policy
+from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -28,8 +30,14 @@ _HERE = Path(__file__).resolve().parent
 _SRC = _HERE.parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+# Optional paper2lean package lives beside lean_formalizer in the workspace.
+_PAPER2LEAN_SRC = _HERE.parents[3] / "paper2lean" / "src"
+if _PAPER2LEAN_SRC.exists() and str(_PAPER2LEAN_SRC) not in sys.path:
+    sys.path.insert(0, str(_PAPER2LEAN_SRC))
 
 from lean_formalizer.pipeline import FormalizationPipeline
+from lean_formalizer.paper_pipeline import PaperPipeline
+from lean_formalizer.file_support import parser_status
 from lean_formalizer.llm import (
     get_llm,
     LLMClient,
@@ -347,7 +355,70 @@ def _run_pipeline(
     text: Optional[str],
     pdf_path: Optional[str],
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+    tex_path: Optional[str] = None,
 ) -> dict:
+    if pdf_path or tex_path:
+        if str(data.get("pipeline") or os.environ.get("PAPER2LEAN_PIPELINE", "")).lower() in {"paper2lean", "new"}:
+            from paper2lean.orchestrator import Paper2Lean
+            runner = Paper2Lean(
+                output_dir=Path(data.get("paper_output") or (ROOT / "paper_runs")),
+                max_repair_rounds=_request_int(data, "max_repair_rounds", 2, 0),
+            )
+            document = runner.analyze(tex_path or pdf_path)
+            report = runner.run(
+                document,
+                target=(data.get("theorem_label") or "").strip() or None,
+                max_units=int(data["max_units"]) if data.get("max_units") not in (None, "") else None,
+                num_candidates=_request_int(data, "num_candidates", 2, 1),
+                resume=str(data.get("resume", "true")).lower() not in {"0", "false", "no"},
+            )
+            report["success"] = bool(report.get("coverage", 0.0) == 1.0 and report.get("units"))
+            report["message"] = f"Paper2Lean artifacts: {Path(data.get('paper_output') or (ROOT / 'paper_runs')) / document.id}"
+            report["paper_report"] = report.copy()
+            return report
+        # File inputs use the paper orchestrator: inventory, dependency plan,
+        # isolated unit artifacts, and a report. Text input retains the legacy
+        # fast single-theorem behavior below.
+        job_limit = _job_timeout_seconds(data)
+        llm = _build_llm_from_request(data)
+        llm.timeout_seconds = _llm_timeout_seconds(data, job_limit)
+        paper = PaperPipeline(
+            llm=llm, memory_dir=MEMORY_DIR,
+            output_dir=Path(data.get("paper_output") or (ROOT / "paper_runs")),
+            num_candidates=_request_int(data, "num_candidates", 2, 1),
+            max_repair_rounds=_request_int(data, "max_repair_rounds", 3, 0),
+            progress_callback=progress_callback, verification_lock=_verification_lock,
+            temperature=float(data.get("temperature") or 0.2),
+            max_parallel_candidates=_request_int(data, "max_parallel_candidates", 1, 1),
+            lean_compile_workers=_request_int(data, "lean_compile_workers", 1, 1),
+            lean_compile_timeout=_lean_compile_timeout_seconds(data, job_limit),
+        )
+        document = paper.analyze(
+            tex_path or pdf_path,
+            project_root=data.get("project_root") or None,
+            target=(data.get("theorem_label") or "").strip() or None,
+            scope=data.get("paper_scope") or "all-results",
+            max_pages=int(data["max_pages"]) if data.get("max_pages") not in (None, "") else None,
+            source_name=data.get("_upload_name") or None,
+        )
+        report = paper.run(
+            document, target=(data.get("theorem_label") or "").strip() or None,
+            scope=data.get("paper_scope") or "all-results",
+            deadline_seconds=_job_timeout_seconds(data),
+            resume=str(data.get("resume", "true")).lower() not in {"0", "false", "no"},
+            save_to_memory=str(data.get("save_to_memory", "true")).lower() in {"1", "true", "yes"},
+            target_statement=(data.get("target_statement") or "").strip() or None,
+            domain=data.get("domain") or "general",
+        )
+        report["success"] = report.get("coverage", 0.0) == 1.0 and report.get("theorem_units_selected", 0) > 0
+        report["message"] = report.get("message", "") + f" Artifacts: {paper.output_dir / document.id}"
+        report["paper_report"] = report.copy()
+        report.setdefault("best_code", "")
+        report.setdefault("candidates", [])
+        report.setdefault("memory_hits", [])
+        report.setdefault("stage_trace", [])
+        report.setdefault("verification", {"compiled": report["success"], "summary": report["message"]})
+        return report
     job_limit = _job_timeout_seconds(data)
     llm = _build_llm_from_request(data)
     # The client owns this value for the whole job.  Do not mutate process-wide
@@ -366,9 +437,9 @@ def _run_pipeline(
     # UI often puts the theorem in "target_statement" and the proof sketch in "text".
     target = (data.get("target_statement") or "").strip()
     body = (text or "").strip()
-    if target and body and target not in body:
+    if target and body and target not in body and not (pdf_path or tex_path):
         text = f"{target}\n\n{body}"
-    elif target and not body:
+    elif target and not body and not (pdf_path or tex_path):
         text = target
 
     domain = data.get("domain") or "general"
@@ -395,6 +466,9 @@ def _run_pipeline(
         result = pipe.formalize(
             text=text,
             pdf_path=pdf_path,
+            tex_path=tex_path,
+            theorem_label=(data.get("theorem_label") or "").strip() or None,
+            source_name=data.get("_upload_name") or None,
             domain=domain,
             max_pages=max_pages_i,
             save_to_memory=save,
@@ -588,7 +662,7 @@ def _fast_mock_result(text: str, domain: str) -> dict:
     }
 
 
-def _start_job(data: dict, text: Optional[str], pdf_path: Optional[str]) -> str:
+def _start_job(data: dict, text: Optional[str], pdf_path: Optional[str], tex_path: Optional[str] = None) -> str:
     job_id = str(uuid.uuid4())
     backend = _backend_status(data)["backend"]
     model = _model_for_backend(backend, data)
@@ -630,7 +704,11 @@ def _start_job(data: dict, text: Optional[str], pdf_path: Optional[str]) -> str:
             _set_job(job_id, step="started", current_event={"stage": "started", "ok": True})
 
             # Offline mock: skip heavy multi-candidate pipeline (was hanging for some users)
-            if backend == "mock" and text and not pdf_path:
+            if backend == "mock" and text and not pdf_path and not tex_path:
+                from .latex_extract import validate_context
+                validate_context(text)
+                if data.get("theorem_label"):
+                    raise ValueError("Theorem label requires a TeX file.")
                 _set_job(job_id, step="mock_fast", current_event={"stage": "mock_fast", "ok": True})
                 result = _fast_mock_result(text, domain)
                 _set_job(
@@ -692,6 +770,7 @@ def _start_job(data: dict, text: Optional[str], pdf_path: Optional[str]) -> str:
             result = _run_pipeline(
                 data, text=text, pdf_path=pdf_path,
                 progress_callback=report_progress,
+                **({"tex_path": tex_path} if tex_path else {}),
             )
             _set_job(
                 job_id,
@@ -725,9 +804,11 @@ def _start_job(data: dict, text: Optional[str], pdf_path: Optional[str]) -> str:
             )
             _log(f"[job {job_id[:8]}] error: {e}")
         finally:
-            if pdf_path:
+            for uploaded_path in (pdf_path, tex_path):
+                if not uploaded_path:
+                    continue
                 try:
-                    os.unlink(pdf_path)
+                    os.unlink(uploaded_path)
                 except OSError:
                     pass
 
@@ -802,6 +883,7 @@ class Handler(BaseHTTPRequestHandler):
                     "lean_project": str(lean_project_dir() or ""),
                     "mathlib_index": "available" if lean_project_dir() else "unavailable",
                     "memory_dir": MEMORY_DIR,
+                    "file_support": parser_status(),
                 },
             )
             return
@@ -961,6 +1043,21 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/formalize":
                 self._handle_formalize_async()
                 return
+            if path == "/api/paper2lean/analyze":
+                from paper2lean.web_api import analyze_request
+                body = _read_json_body(self)
+                _json_response(self, 200, analyze_request(body, output_dir=body.get("output_dir") or (ROOT / "paper_runs")))
+                return
+            if path == "/api/paper2lean/run":
+                from paper2lean.web_api import run_request
+                body = _read_json_body(self)
+                _json_response(self, 200, run_request(body, output_dir=body.get("output_dir") or (ROOT / "paper_runs")))
+                return
+            if path == "/api/paper2lean/status":
+                from paper2lean.web_api import status_request
+                body = _read_json_body(self)
+                _json_response(self, 200, status_request(body, output_dir=body.get("output_dir") or (ROOT / "paper_runs")))
+                return
             if path == "/api/backend/check":
                 _json_response(self, 200, _backend_status(_read_json_body(self)))
                 return
@@ -1051,20 +1148,43 @@ class Handler(BaseHTTPRequestHandler):
             _json_response(self, 500, {"error": str(e)})
 
     def _handle_formalize_upload_async(self) -> None:
-        # Minimal multipart parser (filename + fields) without cgi
         ctype = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in ctype:
             _json_response(self, 400, {"error": "expected multipart/form-data"})
             return
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length) if length else b""
-        data, pdf_path = _parse_multipart(ctype, raw)
-        text = (data.get("text") or "").strip()
-        if not text and not pdf_path:
-            _json_response(self, 400, {"error": "provide text or a PDF file"})
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self.close_connection = True
+            _json_response(self, 400, {"error": "invalid Content-Length"})
             return
-        data["llm_backend"] = _backend_status(data)["backend"]
-        job_id = _start_job(data, text=text or None, pdf_path=pdf_path)
+        if length <= 0 or length > 6 * 1024 * 1024:
+            self.close_connection = True
+            _json_response(self, 413, {"error": "Upload must be nonempty and at most 6 MiB."})
+            return
+        raw = self.rfile.read(length) if length else b""
+        upload_path = None
+        try:
+            data, upload_path = _parse_multipart(ctype, raw)
+            text = (data.get("text") or "").strip()
+            if not text and not upload_path:
+                raise ValueError("Provide text, a PDF file, or a TeX file.")
+            if text and upload_path:
+                raise ValueError("Provide one source: text or an uploaded file. Use target_statement for a separate target.")
+            data["llm_backend"] = _backend_status(data)["backend"]
+            is_tex = bool(upload_path and Path(upload_path).suffix.lower() == ".tex")
+            job_id = _start_job(data, text=text or None,
+                                pdf_path=None if is_tex else upload_path,
+                                **({"tex_path": upload_path} if is_tex else {}))
+        except (ValueError, OSError) as exc:
+            if upload_path:
+                Path(upload_path).unlink(missing_ok=True)
+            _json_response(self, 400, {"error": str(exc)})
+            return
+        except Exception:
+            if upload_path:
+                Path(upload_path).unlink(missing_ok=True)
+            raise
         _json_response(
             self, 200,
             {
@@ -1094,45 +1214,61 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def _parse_multipart(content_type: str, body: bytes) -> tuple[dict, Optional[str]]:
-    """Very small multipart parser for our form fields + optional PDF."""
+    """Parse fields and one PDF/TeX upload; validate before creating a file."""
+    if len(body) > 6 * 1024 * 1024:
+        raise ValueError("Upload exceeds the 6 MiB request limit.")
+    if "\r" in content_type or "\n" in content_type:
+        raise ValueError("Invalid multipart Content-Type.")
+    message = BytesParser(policy=policy.default).parsebytes(
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode() + body
+    )
+    if not message.is_multipart() or any(part.defects for part in message.walk()):
+        raise ValueError("Malformed multipart upload or missing boundary.")
     data: dict[str, str] = {}
-    pdf_path: Optional[str] = None
-    if "boundary=" not in content_type:
+    upload = None
+    for part in message.iter_parts():
+        if part.is_multipart() or part.get_content_disposition() != "form-data":
+            raise ValueError("Expected flat multipart form-data.")
+        name = part.get_param("name", header="content-disposition")
+        filename = part.get_filename()
+        content = part.get_payload(decode=True) or b""
+        if filename is not None:
+            suffix = Path(filename).suffix.lower()
+            if suffix not in {".pdf", ".tex"}:
+                raise ValueError("Supported upload types are .pdf and .tex.")
+            if upload is not None:
+                raise ValueError("Upload exactly one file.")
+            if not content or len(content) > 5 * 1024 * 1024:
+                raise ValueError("File must be nonempty and at most 5 MiB.")
+            if suffix == ".tex":
+                try:
+                    content.decode("utf-8-sig")
+                except UnicodeDecodeError as exc:
+                    raise ValueError("TeX file must use UTF-8 encoding.") from exc
+            elif b"%PDF-" not in content[:1024]:
+                raise ValueError("Uploaded PDF does not have a PDF header.")
+            upload = (suffix, filename.replace("\\", "/").rsplit("/", 1)[-1], content)
+        elif name:
+            if name.startswith("_") or name in data:
+                raise ValueError("Invalid or duplicate form field.")
+            try:
+                data[name] = content.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError("Form fields must use UTF-8 encoding.") from exc
+    if upload is None:
         return data, None
-    boundary = content_type.split("boundary=", 1)[1].strip().strip('"').encode()
-    parts = body.split(b"--" + boundary)
-    for part in parts:
-        if not part or part in (b"--\r\n", b"--", b"\r\n", b"--\r\n\r\n"):
-            continue
-        if part.startswith(b"--"):
-            continue
-        if b"\r\n\r\n" not in part:
-            continue
-        header_blob, content = part.split(b"\r\n\r\n", 1)
-        if content.endswith(b"\r\n"):
-            content = content[:-2]
-        headers = header_blob.decode("utf-8", errors="replace")
-        # name=
-        name = None
-        for line in headers.split("\r\n"):
-            if "name=" in line:
-                # Content-Disposition: form-data; name="text"; filename="x.pdf"
-                for chunk in line.split(";"):
-                    chunk = chunk.strip()
-                    if chunk.startswith("name="):
-                        name = chunk.split("=", 1)[1].strip().strip('"')
-                    elif chunk.startswith("filename="):
-                        fname = chunk.split("=", 1)[1].strip().strip('"')
-                        if name == "pdf" or (fname and fname.lower().endswith(".pdf")):
-                            tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-                            tmp.write(content)
-                            tmp.close()
-                            pdf_path = tmp.name
-                            name = None  # don't also put binary in data
-                break
-        if name:
-            data[name] = content.decode("utf-8", errors="replace")
-    return data, pdf_path
+    suffix, filename, content = upload
+    data["_upload_name"] = filename
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(content)
+        return data, tmp_path
+    except Exception:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+        raise
 
 
 def main(argv: Optional[list[str]] = None) -> int:

@@ -5,10 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lean-formalizer"
 version = "1.0.0"
-description = "High-accuracy Natural Language / PDF → Lean 4 formalization pipeline"
+description = "High-accuracy Natural Language / PDF / TeX → Lean 4 formalization pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "pylatexenc>=2.10,<3",
   "pdfplumber>=0.11.0",
   "pypdf>=4.0.0",
   "numpy>=1.26.0",

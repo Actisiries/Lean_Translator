@@ -3,4 +3,7 @@ local_config.ps1
 local_config.env
 __pycache__/
 *.pyc
+scratch/test_dependencies/
+.runtime_dependencies/
+paper_runs/
 .DS_Store

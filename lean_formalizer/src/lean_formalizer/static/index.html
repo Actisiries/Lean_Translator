@@ -35,27 +35,40 @@
         <h2>Input</h2>
         <div class="tabs">
           <button type="button" class="tab active" data-tab="text">Text</button>
-          <button type="button" class="tab" data-tab="pdf">PDF</button>
+          <button type="button" class="tab" data-tab="pdf">PDF / TeX</button>
         </div>
 
         <div id="tab-text" class="tab-panel active">
           <label for="input-text">Natural language (required)</label>
           <textarea id="input-text" rows="8" placeholder="Theorem. Every natural number is either even or odd.&#10;&#10;Proof. …"></textarea>
 
-          <label for="input-statement">Formal statement <span class="muted">(optional)</span></label>
-          <textarea id="input-statement" rows="4" placeholder="Optional: precise NL claim, or a Lean declaration to prove&#10;e.g. theorem t (n : ℕ) : Even n ∨ Odd n"></textarea>
-          <p class="hint">If set, the translator treats this as the target statement (Lean declaration or precise claim).</p>
         </div>
 
         <div id="tab-pdf" class="tab-panel">
-          <label for="input-pdf">Upload PDF</label>
+          <label for="input-pdf">Upload PDF or LaTeX source</label>
           <div class="dropzone" id="dropzone">
-            <input type="file" id="input-pdf" accept="application/pdf,.pdf" />
-            <p id="pdf-label">Drop a PDF here or click to browse</p>
+            <input type="file" id="input-pdf" accept="application/pdf,.pdf,.tex,application/x-tex,text/x-tex" />
+            <p id="pdf-label">Drop a PDF or .tex file here or click to browse</p>
           </div>
-          <label for="max-pages">Max pages (optional)</label>
+          <label for="theorem-label">Theorem label <span class="muted">(TeX only)</span></label>
+          <input type="text" id="theorem-label" placeholder="e.g. thm:main" />
+          <p class="hint">UTF-8 standalone .tex, up to 5 MiB. A label is required when the file contains several theorems. Included files are not loaded.</p>
+          <label for="paper-scope">Paper scope</label>
+          <select id="paper-scope">
+            <option value="all-results" selected>All inventoried results</option>
+            <option value="main-results">Main results and dependencies</option>
+          </select>
+          <label for="paper-output">Paper output directory <span class="muted">(optional)</span></label>
+          <input type="text" id="paper-output" placeholder="./paper_runs" />
+          <label for="max-pages">Max pages (PDF only, optional)</label>
           <input type="number" id="max-pages" min="1" placeholder="e.g. 5" />
         </div>
+
+        <p class="hint hidden" id="input-warnings" role="status"></p>
+
+        <label for="input-statement">Formal statement <span class="muted">(optional)</span></label>
+        <textarea id="input-statement" rows="4" placeholder="Optional: precise NL claim, or a Lean declaration to prove&#10;e.g. theorem t (n : ℕ) : Even n ∨ Odd n"></textarea>
+        <p class="hint">If set, the translator treats this as the target statement (Lean declaration or precise claim), alongside your text or uploaded file.</p>
 
         <label for="domain">Domain</label>
         <select id="domain">

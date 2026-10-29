@@ -480,7 +480,16 @@ function wireDropzone() {
   const label = $("#pdf-label");
   if (!dz || !input) return;
   const setFile = (file) => {
-    if (!file) return;
+    state.pdfFile = null;
+    if (!file) {
+      if (label) label.textContent = "Drop a PDF or .tex file here or click to browse";
+      return;
+    }
+    if (!/\.(pdf|tex)$/i.test(file.name) || file.size > 5 * 1024 * 1024 || !file.size) {
+      input.value = "";
+      if (label) label.textContent = "Choose a nonempty PDF or .tex file up to 5 MiB.";
+      return;
+    }
     state.pdfFile = file;
     if (label) label.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
   };
@@ -581,6 +590,10 @@ function collectConfig() {
     temperature: $("#temperature")?.value || "0.2",
     save_to_memory: $("#save-memory")?.checked ? "true" : "false",
     max_pages: $("#max-pages")?.value || "",
+    theorem_label: $(".tab.active")?.dataset.tab === "pdf" && /\.tex$/i.test(state.pdfFile?.name || "")
+      ? ($("#theorem-label")?.value.trim() || "") : "",
+    paper_scope: $("#paper-scope")?.value || "all-results",
+    paper_output: $("#paper-output")?.value.trim() || "",
     llm_timeout: $("#llm-timeout")?.value || "300",
     job_timeout: $("#job-timeout")?.value || "1200",
     target_statement: $("#input-statement")?.value.trim() || "",
@@ -1181,7 +1194,8 @@ async function onRun() {
   clearPreviousResult();
 
   const activeTab = $(".tab.active")?.dataset.tab || "text";
-  const text = $("#input-text")?.value.trim() || "";
+  const text = activeTab === "text" ? ($("#input-text")?.value.trim() || "") : "";
+  $("#input-warnings")?.classList.add("hidden");
   let cfg = collectConfig();
   // Keep for the debug report (no API keys)
   state.lastInput = {
@@ -1199,6 +1213,7 @@ async function onRun() {
     llm_timeout: cfg.llm_timeout,
     tab: activeTab,
     pdf: activeTab === "pdf" ? (state.pdfFile?.name || $("#input-pdf")?.files?.[0]?.name || "") : "",
+    theorem_label: cfg.theorem_label || "",
   };
 
   if (btn) btn.disabled = true;
@@ -1216,11 +1231,11 @@ async function onRun() {
     }
 
     let startResp;
-    if (activeTab === "pdf" && (state.pdfFile || $("#input-pdf")?.files?.[0])) {
-      const file = state.pdfFile || $("#input-pdf").files[0];
+    if (activeTab === "pdf") {
+      const file = state.pdfFile;
+      if (!file) throw new Error("Choose a PDF or .tex file up to 5 MiB.");
       const fd = new FormData();
-      fd.append("pdf", file);
-      if (text) fd.append("text", text);
+      fd.append("file", file);
       Object.entries(cfg).forEach(([k, v]) => fd.append(k, v ?? ""));
       startResp = await api("/api/formalize/upload", { method: "POST", body: fd }, 60000);
     } else {
@@ -1369,6 +1384,24 @@ function renderResult(data) {
 }
 
 function fillDetails(data) {
+  if (data.paper_report && $("#out-structure")) {
+    const paper = data.paper_report;
+    $("#out-structure").textContent = [
+      `Paper: ${paper.name || ""}`,
+      `Format: ${paper.format || ""}`,
+      `Coverage: ${Number(paper.coverage || 0).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })}`,
+      "",
+      ...(paper.selected_units || []).map((u) => `${u.label}: ${u.status}${u.message ? " — " + u.message : ""}`),
+      ...(paper.warnings || []).map((w) => "Warning: " + w),
+    ].join("\n");
+  }
+  const source = data.source || {};
+  const inputWarnings = source.warnings || [];
+  const warningBox = $("#input-warnings");
+  if (warningBox) {
+    warningBox.textContent = inputWarnings.join(" ");
+    warningBox.classList.toggle("hidden", !inputWarnings.length);
+  }
   const ver = data.verification || {};
   const issues = (ver.issues || [])
     .map((i) => `• [${i.severity}/${i.category}] ${i.message}${i.hint ? "\n    " + i.hint : ""}`)
@@ -1390,8 +1423,13 @@ function fillDetails(data) {
   }
 
   const s = data.structured || {};
-  if ($("#out-structure")) {
+  if ($("#out-structure") && !data.paper_report) {
     $("#out-structure").textContent = [
+      source.name ? `Source: ${source.name}` : "",
+      source.selected_label ? `Selected theorem: ${source.selected_label}` : "",
+      ...(source.blocks || []).map((b) => `${b.included ? "Included" : "Excluded"} ${b.kind}: lines ${b.start_line}–${b.end_line}${b.labels?.length ? " (" + b.labels.join(", ") + ")" : ""}`),
+      ...inputWarnings.map((w) => "Input warning: " + w),
+      "",
       "Definitions:",
       ...(s.definitions || []).map((d) => "  • " + d),
       "",
@@ -1582,7 +1620,8 @@ function buildDebugReport() {
   lines.push("");
 
   lines.push("--- Input ---");
-  if (inp.pdf) lines.push(`PDF: ${inp.pdf}`);
+  if (inp.pdf) lines.push(`File: ${inp.pdf}`);
+  if (inp.theorem_label) lines.push(`Theorem label: ${inp.theorem_label}`);
   lines.push("Natural language:");
   lines.push(inp.text || "(empty)");
   if (inp.target_statement) {

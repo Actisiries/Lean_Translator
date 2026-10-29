@@ -1,9 +1,9 @@
-# High-Accuracy NL / PDF → Lean 4 Formalization Pipeline
+# High-Accuracy NL / PDF / TeX → Lean 4 Formalization Pipeline
 
-Production-oriented end-to-end workflow that turns mathematical text (PDF or plain language) into **verified Lean 4** code.
+Production-oriented end-to-end workflow that turns mathematical text (PDF, standalone LaTeX, or plain language) into **verified Lean 4** code.
 
 ```
-PDF / Natural Language Text
+PDF / LaTeX / Natural Language Text
         ↓
 1. Text Extraction & Cleaning
         ↓
@@ -27,6 +27,7 @@ Final Verified Lean 4 Code
 ## Features
 
 - **PDF extraction** via `pdfplumber` / `pypdf` (digital text preferred)
+- **LaTeX source extraction** via `pylatexenc`, preserving formulas, macro definitions, theorem/proof environments, and source line locations
 - **Structure decomposition** (definitions, theorem, lemmas, proof sketch)
 - **Memory bank** with TF-IDF retrieval of successful formalizations and repair examples
 - **Multi-stage LLM prompting** (understand → statement → proof → self-critique)
@@ -37,6 +38,20 @@ Final Verified Lean 4 Code
 
 ## Quick Start — Web UI (opens in browser)
 
+File inputs need `pylatexenc` for TeX and either `pdfplumber` or `pypdf` for PDF.
+Install these into the Python that runs the server, or use the application-local
+directory (also supported by portable/embedded Python):
+
+```powershell
+python -m pip install --target .runtime_dependencies 'pylatexenc>=2.10,<3' 'pypdf>=4.0.0'
+```
+
+Run this from `lean_formalizer`, then restart the server. If the server uses a
+different Python, the application-local packages are still loaded on startup.
+`python run_cli.py doctor` and `/api/health` show the server Python and PDF/TeX
+parser availability. Parser availability is separate from LLM and Lean setup;
+the offline mock backend can only replay existing memory entries.
+
 ```bash
 cd lean_formalizer
 export PYTHONPATH=src
@@ -46,7 +61,7 @@ python -m lean_formalizer.webapp
 
 The website exposes every pipeline control:
 
-- Text input **or** PDF upload
+- Text input **or** PDF / TeX upload (with theorem-label selection)
 - Domain selection
 - LLM backend (mock / OpenAI / Anthropic / HTTP) + API keys
 - Candidates, repair rounds, temperature
@@ -68,6 +83,55 @@ Or from a PDF:
 python -m lean_formalizer.cli formalize --pdf path/to/paper.pdf --domain algebra
 ```
 
+Or from a standalone UTF-8 LaTeX file (extensions are case insensitive):
+
+```bash
+python -m pip install -r requirements.txt
+python run_cli.py formalize --tex examples/identity.tex --theorem-label thm:add-zero --no-save
+python run_cli.py formalize --tex path/to/paper.TeX --theorem-label thm:main --domain algebra --json
+```
+
+Use exactly one of `--text`, `--pdf`, or `--tex`. `--target-statement` can provide
+an additional precise claim or Lean declaration. In the browser, choose the
+**PDF / TeX** tab, select the file, and enter its theorem label when necessary.
+The formal-statement field applies to uploaded files too.
+
+### LaTeX behavior and limits
+
+- Standard theorem, lemma, proposition, corollary, claim, and conjecture
+  environments, starred variants, and custom `\newtheorem` environments are
+  recognized. If several claims exist, select one by `\label{...}`; a single
+  theorem can be selected automatically. Files without theorem environments
+  are treated as mathematical excerpts.
+- The selected claim, its following proof, preceding prose/definitions, and
+  labelled mathematical blocks reached through `\ref`, `\eqref`, `\autoref`,
+  or `\cref` are retained. Unreferenced theorem/proof blocks are excluded.
+  Dependency discovery is syntactic: implicit dependencies may require an
+  explicit reference or a smaller excerpt with the required assumptions.
+- Formulas and nested expressions remain LaTeX. Macro definitions are supplied
+  to the model, without executing or expanding TeX. Comments and bibliography
+  environments are excluded. Unknown commands, low-level macros, missing
+  references, and included files generate warnings.
+- This release reads standalone files only. `\input`, `\include`, and
+  `\subfile` are not opened; combine the required source into one file.
+  No TeX compiler or shell command is executed during extraction.
+- TeX files must be UTF-8 (a BOM is accepted), at most 5 MiB. Web requests are
+  limited to 6 MiB. Mathematical input is capped at 48,000 characters
+  (approximately 12,000 tokens for English; LaTeX token counts vary).
+  Oversized context is rejected with an actionable message, never silently
+  truncated. The extracted theorem statement is also retained in full.
+- Results include a `source` object with filename, selected label, warnings,
+  and block line ranges/inclusion status. The web UI displays warnings and
+  exposes source locations in Details. A real LLM backend is needed for new
+  claims; the mock backend only replays existing examples.
+
+Run the regression suite after installing requirements:
+
+```bash
+python -m unittest discover -s tests -v
+node tests/test_upload_ui.cjs
+```
+
 ## Project Layout
 
 ```
@@ -79,6 +143,7 @@ lean_formalizer/
 │   ├── static/                # index.html + CSS + JS
 │   ├── pipeline.py            # Orchestrator of the 8 steps
 │   ├── extract.py             # PDF / text cleaning
+│   ├── latex_extract.py       # Standalone TeX parsing and theorem selection
 │   ├── structure.py           # Decomposition into defs / thm / lemmas / sketch
 │   ├── memory.py              # JSON + TF-IDF memory store
 │   ├── prompts.py             # Multi-stage prompt templates

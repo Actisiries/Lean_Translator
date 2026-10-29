@@ -74,6 +74,9 @@ class ProofAudit:
     summary: str = ""
     steps: list[ProofStep] = field(default_factory=list)
 
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass
 class FormalizationResult:
@@ -97,6 +100,8 @@ class FormalizationResult:
     quota_exceeded: bool = False
     # Per-stage diagnostics (lengths, previews, errors) for empty-code debugging
     stage_trace: list[dict[str, Any]] = field(default_factory=list)
+    # Input provenance and nonfatal extraction warnings, including TeX lines.
+    source: dict[str, Any] = field(default_factory=dict)
     # Run configuration and actual work counts.  Keeping these separate makes
     # it clear that a worker count is concurrency, not the requested breadth.
     requested_candidates: int = 0

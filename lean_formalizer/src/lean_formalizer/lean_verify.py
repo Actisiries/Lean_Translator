@@ -1026,6 +1026,8 @@ def _write_compile_cache(code: str, project: Optional[Path], ok: bool, message: 
 def _noncacheable_compiler_failure(message: str) -> bool:
     """Failures caused by project state/import paths must be freshly checked."""
     text = (message or "").lower()
+    if any(marker in text for marker in ("dubious ownership", "safe.directory", "external command 'git' exited", "failed to invoke lake")):
+        return True
     return any(marker in text for marker in (
         "object file", "unknown module", "module ",
         "cannot create lean compiler scratch", "cannot write lean compiler scratch",
@@ -1125,6 +1127,76 @@ def compile_lean(
     ok, message = _compile_bare(code, bin_name, timeout=t)
     _write_compile_cache(code, project, ok, message, time.monotonic() - started)
     return ok, message
+
+
+def declaration_preflight_source(code: str) -> str:
+    """Replace only the final theorem's proof, preserving supporting definitions.
+
+    Mask comments and strings without changing offsets. A binder's default
+    value or a let expression inside parentheses must not end the signature.
+    Namespace endings after the target are retained.
+    """
+    masked = list(code)
+    i = 0
+    comment_depth = 0
+    in_string = False
+    while i < len(code):
+        pair = code[i:i + 2]
+        if comment_depth:
+            if pair == '/-':
+                comment_depth += 1
+            elif pair == '-/':
+                comment_depth -= 1
+            else:
+                masked[i] = '\n' if code[i] == '\n' else ' '
+                i += 1
+                continue
+            masked[i:i + 2] = [' ', ' ']
+            i += 2
+        elif in_string:
+            masked[i] = '\n' if code[i] == '\n' else ' '
+            if code[i] == '\\' and i + 1 < len(code):
+                masked[i + 1] = ' '
+                i += 2
+                continue
+            if code[i] == '"':
+                in_string = False
+            i += 1
+        elif pair == '/-':
+            comment_depth = 1
+            masked[i:i + 2] = [' ', ' ']
+            i += 2
+        elif pair == '--':
+            end = code.find('\n', i)
+            end = len(code) if end < 0 else end
+            masked[i:end] = [' '] * (end - i)
+            i = end
+        elif code[i] == '"':
+            in_string = True
+            masked[i] = ' '
+            i += 1
+        else:
+            i += 1
+    text = ''.join(masked)
+    targets = list(re.finditer(r'(?m)^[ \t]*(?:(?:private|protected|noncomputable)\s+)*(theorem|lemma)\b', text))
+    if not targets:
+        raise ValueError('Statement preflight needs a theorem or lemma declaration.')
+    target = targets[-1]
+    end_match = re.search(r'(?m)^[ \t]*end\b', text[target.end():])
+    end = target.end() + end_match.start() if end_match else len(code)
+    depth = 0
+    body = end
+    for pos in range(target.end(), end):
+        char = text[pos]
+        if char in '([{⦃':
+            depth += 1
+        elif char in ')]}⦄':
+            depth -= 1
+        elif depth == 0 and text[pos:pos + 2] == ':=':
+            body = pos
+            break
+    return (code[:target.start(1)] + 'axiom' + code[target.end(1):body].rstrip()
+            + '\n' + code[end:])
 
 
 def compile_declaration(

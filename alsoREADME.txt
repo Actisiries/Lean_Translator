@@ -1,3 +1,4 @@
+For lean_formalizer,
 HTTP mode from backend connected LLM:
 	$env:LLM_BACKEND = "http"
 	$env:LLM_HTTP_URL = "http://127.0.0.1:<port_number>/v1"
@@ -6,7 +7,7 @@ HTTP mode from backend connected LLM:
 e.g.
 	$env:LLM_BACKEND = "http"
 	$env:LLM_HTTP_URL = "http://127.0.0.1:15721/v1"
-	$env:LLM_HTTP_MODEL = "deepseek-v4-flash"
+	$env:LLM_HTTP_MODEL = "gpt-6.1-sol"
 
 Close web server:
 	netstat -ano | findstr <port_number>
@@ -24,4 +25,7 @@ First time running:
 			lake build
 	
 	Click start_translator.bat in Lean_work_1\lean_formalizer
+
+============================================================================================================
+For paper2lean, similarly 
 

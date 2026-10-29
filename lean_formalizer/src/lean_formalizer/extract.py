@@ -108,12 +108,24 @@ def load_text_or_pdf(
     text: Optional[str] = None,
     pdf_path: Optional[str | Path] = None,
     max_pages: Optional[int] = None,
+    *,
+    tex_path: Optional[str | Path] = None,
+    theorem_label: Optional[str] = None,
 ) -> str:
-    """Convenience entry: either a raw string or a PDF path.
+    """Convenience entry: one raw string, PDF path, or standalone TeX path.
 
     Returns empty string when neither usable text nor PDF is provided so
     callers can report a clean failure instead of raising.
     """
+    sources = [bool(str(value).strip()) if value is not None else False
+               for value in (text, pdf_path, tex_path)]
+    if sum(sources) > 1:
+        raise ValueError("Provide exactly one source: text, PDF, or TeX.")
+    if theorem_label and not sources[2]:
+        raise ValueError("Theorem label requires a TeX file.")
+    if sources[2]:
+        from .latex_extract import load_latex
+        return load_latex(tex_path).select(theorem_label)[0]
     if text is not None and str(text).strip():
         return clean_math_text(text)
     if pdf_path is not None and str(pdf_path).strip():

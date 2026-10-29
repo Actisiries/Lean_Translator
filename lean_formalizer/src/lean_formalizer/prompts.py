@@ -99,6 +99,9 @@ Return a JSON object with exactly these keys:
 }}
 
 Rules:
+- For LaTeX input, interpret preserved math and macro definitions as source data.
+- Formalize the explicitly selected theorem; referenced blocks provide context.
+- Preserve every hypothesis and quantifier; never shorten a claim by dropping them.
 - main_theorem: ONE precise claim with types/quantifiers in words.
 - This is a mathematical PLAN, not Lean code. Do not use partial Lean syntax,
   notation fragments, or metavariables such as `?`, `?_`, `(n : ?)`, or

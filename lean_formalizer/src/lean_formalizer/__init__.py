@@ -2,6 +2,15 @@
 
 __version__ = "1.0.0"
 
+# File parsers may be installed beside the application for portable Python
+# runtimes (including Windows embedded Python, which ignores PYTHONPATH).
+import sys
+from pathlib import Path
+
+_local_dependencies = Path(__file__).resolve().parents[2] / ".runtime_dependencies"
+if _local_dependencies.is_dir() and str(_local_dependencies) not in sys.path:
+    sys.path.append(str(_local_dependencies))
+
 from .pipeline import FormalizationPipeline
 from .models import FormalizationResult, StructuredMath, MemoryEntry
 

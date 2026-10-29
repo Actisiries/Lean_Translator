@@ -20,7 +20,9 @@ def decompose(
     deadline_monotonic: Optional[float] = None,
 ) -> StructuredMath:
     """Extract definitions, main theorem, lemmas, proof sketch, domain, difficulty."""
-    prompt = STRUCTURE_PROMPT.format(text=cleaned_text[:6000], domain=domain)
+    from .latex_extract import validate_context
+    validate_context(cleaned_text)
+    prompt = STRUCTURE_PROMPT.format(text=cleaned_text, domain=domain)
     messages = [
         {"role": "system", "content": SYSTEM_MATH + " " + SYSTEM_JSON},
         {"role": "user", "content": prompt},
@@ -70,9 +72,9 @@ def decompose(
     fallback_main = re.split(r"(?<=[.!?])\s+(?=[A-Z])", cleaned_text.strip())
     main_theorem = str(
         data.get("main_theorem") or (fallback_main[0] if fallback_main else cleaned_text)
-    ).strip()[:400]
-    if len(main_theorem) < 30 and len(cleaned_text.strip()) > len(main_theorem):
-        main_theorem = cleaned_text.strip()[:400]
+    ).strip()
+    if main_theorem.rstrip(".!?") == cleaned_text.strip().rstrip(".!?"):
+        main_theorem = cleaned_text.strip()
     return StructuredMath(
         definitions=list(data.get("definitions") or []),
         main_theorem=main_theorem,
