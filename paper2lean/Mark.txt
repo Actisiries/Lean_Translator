@@ -1,0 +1,9 @@
+1. The webpage UI is way to simple. Following is my idea.
+	a. Create similar initial UI as lean_formalizer which could only input PDF/TeX, which is left side input, right side show result
+	b. State clearly of parallel workers and number of workers
+	c. Also have the history and statistics page
+	d. Also allow to switch day/night mode
+	e. Also show model name and if it is connected
+2. Apart from using entered key, the paper2lean should also able to use LLM through {{	$env:LLM_BACKEND = "http"
+	$env:LLM_HTTP_URL = "http://127.0.0.1:15721/v1"
+	$env:LLM_HTTP_MODEL = "gpt-6.1-sol"}}. But please tell me how do it works.
